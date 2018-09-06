@@ -17,6 +17,7 @@ from torch.optim import lr_scheduler
 
 from torchreid import data_manager
 from torchreid.dataset_loader import ImageDataset
+from torchreid.dataset_loader import read_image
 from torchreid import transforms as T
 from torchreid import models
 from torchreid.losses import CrossEntropyLabelSmooth, DeepSupervision
@@ -89,6 +90,14 @@ parser.add_argument('--load-weights', type=str, default='',
                     help="load pretrained weights but ignores layers that don't match in size")
 parser.add_argument('--evaluate', action='store_true',
                     help="evaluation only")
+
+parser.add_argument('--predict', action='store_true',
+                    help="predict only")
+parser.add_argument('--input-path', type=str, default='images',
+                    help="input files path")
+parser.add_argument('--json-file', type=str, default='reid.json.line',
+                    help="store in json file")
+
 parser.add_argument('--eval-step', type=int, default=-1,
                     help="run evaluation for every N epochs (set to -1 to test after training)")
 parser.add_argument('--start-eval', type=int, default=0,
@@ -162,6 +171,8 @@ def main():
         pin_memory=pin_memory, drop_last=False,
     )
 
+    # waldoloader = DataLoader()
+
     print("Initializing model: {}".format(args.arch))
     model = models.init_model(name=args.arch, num_classes=dataset.num_train_pids, loss={'xent'}, use_gpu=use_gpu)
     print("Model size: {:.3f} M".format(count_num_param(model)))
@@ -216,6 +227,16 @@ def main():
                 save_dir=osp.join(args.save_dir, 'ranked_results'),
                 topk=20,
             )
+        return
+
+    if args.predict:
+        from glob import glob
+        from os import path
+        images = glob(path.join(args.input_path, '*.jpg'))
+        print("Predict only")
+        input_datas = [transform_test(read_image(img)) for img in images]
+        print('len of datas', len(input_datas))
+        predict(model, input_datas, args.json_file, use_gpu)
         return
 
     start_time = time.time()
@@ -309,6 +330,35 @@ def train(epoch, model, criterion, optimizer, trainloader, use_gpu, freeze_bn=Fa
                    data_time=data_time, loss=losses))
         
         end = time.time()
+
+
+def predict(model, input_datas, json_file, use_gpu):
+    import json
+    batch_time = AverageMeter()
+
+    model.eval()
+
+    with open(json_file, 'w') as f:
+        with torch.no_grad():
+            for i, d in enumerate(input_datas):
+                if use_gpu: d = d.cuda()
+
+
+                input = d.unsqueeze(0)
+
+                end = time.time()
+                feature = model(input)
+                batch_time.update(time.time() - end)
+
+                feature = feature.tolist()[0]
+                # print(i, feature)
+                # print('\n', len(feature))
+                # res.append(dict(fn=img, vect=feature))
+                f.writelines(json.dumps(dict(idx=i, vect=feature)))
+                f.write('\n')
+
+    print("Predict {} files".format(len(input_datas)))
+
 
 
 def test(model, queryloader, galleryloader, use_gpu, ranks=[1, 5, 10, 20], return_distmat=False):

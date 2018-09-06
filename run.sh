@@ -1,0 +1,1 @@
+python train_imgreid_xent.py -d market1501 -a resnet50 --predict --load-weights saved-models/resnet50_xent_market1501.pth.tar --save-dir log/resnet50-xent-market1501 --gpu-devices 0 --input-path imgs --json-file reid.json.line --use-cpu
