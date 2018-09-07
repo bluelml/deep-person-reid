@@ -93,7 +93,7 @@ parser.add_argument('--evaluate', action='store_true',
 
 parser.add_argument('--predict', action='store_true',
                     help="predict only")
-parser.add_argument('--input-path', type=str, default='images',
+parser.add_argument('--yolo-file', type=str, default='yolo.json.line',
                     help="input files path")
 parser.add_argument('--json-file', type=str, default='reid.json.line',
                     help="store in json file")
@@ -111,6 +111,12 @@ parser.add_argument('--vis-ranked-res', action='store_true',
                     help="visualize ranked results, only available in evaluation mode (default: False)")
 
 args = parser.parse_args()
+
+TF = T.Compose([
+    T.Resize((args.height, args.width)),
+    T.ToTensor(),
+    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
 
 
 def main():
@@ -230,13 +236,8 @@ def main():
         return
 
     if args.predict:
-        from glob import glob
-        from os import path
-        images = glob(path.join(args.input_path, '*.jpg'))
         print("Predict only")
-        input_datas = [transform_test(read_image(img)) for img in images]
-        print('len of datas', len(input_datas))
-        predict(model, input_datas, args.json_file, use_gpu)
+        predict(model, args.yolo_file, args.json_file, use_gpu)
         return
 
     start_time = time.time()
@@ -332,32 +333,45 @@ def train(epoch, model, criterion, optimizer, trainloader, use_gpu, freeze_bn=Fa
         end = time.time()
 
 
-def predict(model, input_datas, json_file, use_gpu):
+def predict(model, yolo_file, json_file, use_gpu):
     import json
+    from PIL import Image
     batch_time = AverageMeter()
+
+    yolo_info = []
+    with open(yolo_file, 'r') as f:
+        for line in f:
+            o = json.loads(line.strip())
+            persons = o['result']
+            fn = o['input_fn']
+            bboxes = [b[2] for b in persons]
+            # bbox: left, top, right, bootom
+            for b in bboxes:
+                yolo_info.append(dict(fn=fn, bbox=b))
+
+    print(yolo_info[:5])
 
     model.eval()
 
     with open(json_file, 'w') as f:
         with torch.no_grad():
-            for i, d in enumerate(input_datas):
-                if use_gpu: d = d.cuda()
+            for info in yolo_info:
+                for item in info:
+                    img = TF(read_image(item['fn']).crop(item['bbox']))
+                    input = img.unsqueeze(0)
 
+                    end = time.time()
+                    feature = model(input)
+                    batch_time.update(time.time() - end)
 
-                input = d.unsqueeze(0)
+                    feature = feature.tolist()[0]
+                    # print(i, feature)
+                    # print('\n', len(feature))
+                    # res.append(dict(fn=img, vect=feature))
+                    f.writelines(json.dumps(dict(fn=item['fn'], bbox=item['bbox'], vect=feature)))
+                    f.write('\n')
 
-                end = time.time()
-                feature = model(input)
-                batch_time.update(time.time() - end)
-
-                feature = feature.tolist()[0]
-                # print(i, feature)
-                # print('\n', len(feature))
-                # res.append(dict(fn=img, vect=feature))
-                f.writelines(json.dumps(dict(idx=i, vect=feature)))
-                f.write('\n')
-
-    print("Predict {} files".format(len(input_datas)))
+    print("Predict {} files".format(len(yolo_info)))
 
 
 
