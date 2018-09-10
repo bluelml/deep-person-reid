@@ -200,11 +200,13 @@ def main():
     if args.load_weights:
         # load pretrained weights but ignore layers that don't match in size
         if check_isfile(args.load_weights):
-            from functools import partial
-            import pickle
-            pickle.load = partial(pickle.load, encoding="latin1")
-            pickle.Unpickler = partial(pickle.Unpickler, encoding="latin1")
-            checkpoint = torch.load(args.load_weights, pickle_module=pickle)
+            checkpoint = torch.load(args.load_weights, map_location='cpu')
+            
+#             from functools import partial
+#             import pickle
+#             pickle.load = partial(pickle.load, encoding="latin1")
+#             pickle.Unpickler = partial(pickle.Unpickler, encoding="latin1")
+#             checkpoint = torch.load(args.load_weights, pickle_module=pickle)
             pretrain_dict = checkpoint['state_dict']
             model_dict = model.state_dict()
             pretrain_dict = {k: v for k, v in pretrain_dict.items() if k in model_dict and model_dict[k].size() == v.size()}
@@ -356,20 +358,22 @@ def predict(model, yolo_file, json_file, use_gpu):
     with open(json_file, 'w') as f:
         with torch.no_grad():
             for info in yolo_info:
-                for item in info:
-                    img = TF(read_image(item['fn']).crop(item['bbox']))
-                    input = img.unsqueeze(0)
+                print('info', info)
+                 
+                bbox = (int(info['bbox'][0]), int(info['bbox'][1]), int(info['bbox'][2]), int(info['bbox'][3]))                   
+                img = TF(read_image(info['fn']).crop(bbox))
+                input = img.unsqueeze(0)
 
-                    end = time.time()
-                    feature = model(input)
-                    batch_time.update(time.time() - end)
+                end = time.time()
+                feature = model(input)
+                batch_time.update(time.time() - end)
 
-                    feature = feature.tolist()[0]
-                    # print(i, feature)
-                    # print('\n', len(feature))
-                    # res.append(dict(fn=img, vect=feature))
-                    f.writelines(json.dumps(dict(fn=item['fn'], bbox=item['bbox'], vect=feature)))
-                    f.write('\n')
+                feature = feature.tolist()[0]
+                # print(i, feature)
+                # print('\n', len(feature))
+                # res.append(dict(fn=img, vect=feature))
+                f.writelines(json.dumps(dict(fn=info['fn'], bbox=bbox, vect=feature)))
+                f.write('\n')
 
     print("Predict {} files".format(len(yolo_info)))
 
