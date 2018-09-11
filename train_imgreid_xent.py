@@ -17,6 +17,7 @@ from torch.optim import lr_scheduler
 
 from torchreid import data_manager
 from torchreid.dataset_loader import ImageDataset
+from torchreid.dataset_loader import YoloDataset
 from torchreid.dataset_loader import read_image
 from torchreid import transforms as T
 from torchreid import models
@@ -144,6 +145,11 @@ def main():
         cuhk03_labeled=args.cuhk03_labeled, cuhk03_classic_split=args.cuhk03_classic_split,
     )
 
+    dataset_yolo = data_manager.init_imgreid_dataset(
+        root=args.root, name='personyolo', split_id=args.split_id,
+        cuhk03_labeled=args.cuhk03_labeled, cuhk03_classic_split=args.cuhk03_classic_split,
+    )
+
     transform_train = T.Compose([
         T.Random2DTranslation(args.height, args.width),
         T.RandomHorizontalFlip(),
@@ -171,13 +177,22 @@ def main():
         pin_memory=pin_memory, drop_last=False,
     )
 
+
+    yololoader = DataLoader(
+        YoloDataset(dataset_yolo.yolo, transform=transform_test),
+        batch_size=1, shuffle=False, num_workers=args.workers,
+        pin_memory=pin_memory, drop_last=False,
+    )
+
+
+
     galleryloader = DataLoader(
         ImageDataset(dataset.gallery, transform=transform_test),
         batch_size=args.test_batch, shuffle=False, num_workers=args.workers,
         pin_memory=pin_memory, drop_last=False,
     )
 
-    # waldoloader = DataLoader()
+
 
     print("Initializing model: {}".format(args.arch))
     model = models.init_model(name=args.arch, num_classes=dataset.num_train_pids, loss={'xent'}, use_gpu=use_gpu)
@@ -239,7 +254,7 @@ def main():
 
     if args.predict:
         print("Predict only")
-        predict(model, args.yolo_file, args.json_file, use_gpu)
+        predict(model, yololoader, args.json_file, use_gpu)
         return
 
     start_time = time.time()
@@ -335,48 +350,65 @@ def train(epoch, model, criterion, optimizer, trainloader, use_gpu, freeze_bn=Fa
         end = time.time()
 
 
-def predict(model, yolo_file, json_file, use_gpu):
+def predict(model, yololoader, json_file, use_gpu):
     import json
-    from PIL import Image
+
     batch_time = AverageMeter()
-
-    yolo_info = []
-    with open(yolo_file, 'r') as f:
-        for line in f:
-            o = json.loads(line.strip())
-            persons = o['result']
-            fn = o['input_fn']
-            bboxes = [b[2] for b in persons]
-            # bbox: left, top, right, bootom
-            for b in bboxes:
-                yolo_info.append(dict(fn=fn, bbox=b))
-
-    print(yolo_info[:5])
 
     model.eval()
 
     with open(json_file, 'w') as f:
         with torch.no_grad():
-            for info in yolo_info:
-                print('info', info)
-                 
-                bbox = (int(info['bbox'][0]), int(info['bbox'][1]), int(info['bbox'][2]), int(info['bbox'][3]))                   
-                img = TF(read_image(info['fn']).crop(bbox))
-                input = img.unsqueeze(0)
+            for batch_idx, (img, fn, bbox) in enumerate(yololoader):
+                print(fn, bbox)
+                b = (bbox[0].tolist()[0],
+                    bbox[1].tolist()[0],
+                    bbox[2].tolist()[0],
+                    bbox[3].tolist()[0]
+                    )
+                print(fn, b)
+                if use_gpu: imgs = imgs.cuda()
 
-                end = time.time()
-                feature = model(input)
-                batch_time.update(time.time() - end)
-
+                feature = model(img)
+                feature = feature.data.cpu()
                 feature = feature.tolist()[0]
-                # print(i, feature)
-                # print('\n', len(feature))
-                # res.append(dict(fn=img, vect=feature))
-                f.writelines(json.dumps(dict(fn=info['fn'], bbox=bbox, vect=feature)))
+                print(feature)
+                print(type(feature))
+                
+                f.writelines(json.dumps(dict(fn=fn, bbox=b, vect=feature)))
                 f.write('\n')
 
-    print("Predict {} files".format(len(yolo_info)))
+    print("Predict {} files".format(len(yololoader)))
 
+
+def predict2(model, use_gpu):
+    import json
+    from glob import glob
+    from os import path
+    from PIL import Image
+
+    train_data_path = 'data/market1501/bounding_box_train'
+    train_images1 = glob(path.join(train_data_path, '0002_*.jpg'))
+    train_images2 = glob(path.join(train_data_path, '0022_*.jpg'))
+    train_images = train_images1 + train_images2
+    print('train images:', len(train_images))
+
+    yolo_info = []
+    bbox = (0, 0, 64, 128)
+
+    with open('train_data.json.line', 'w') as f:
+        for img in train_images:
+            im = TF(read_image(img))
+            input = im.unsqueeze(0)
+
+            feature = model(input)
+            print(feature)
+            print("++++++++++++++++++\n")
+            feature = feature.tolist()[0]
+            f.writelines(json.dumps(dict(fn=img, bbox=bbox, vect=feature)))
+            f.write('\n')
+
+    print("Predict {} files".format(len(train_images)))
 
 
 def test(model, queryloader, galleryloader, use_gpu, ranks=[1, 5, 10, 20], return_distmat=False):
