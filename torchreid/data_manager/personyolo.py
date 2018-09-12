@@ -48,7 +48,9 @@ class PersonYolo(object):
                 info = json.loads(line.strip())
                 img_path = info['input_fn']
                 for item in info['result']:
-                    bbox = [int(item[2][0]), int(item[2][1]), int(item[2][2]), int(item[2][3])]
+#                     bbox = [int(item[2][0]), int(item[2][1]), int(item[2][2]), int(item[2][3])]
+                    # yolo return the bbox is (center.x, center.y, width, height). Need to transfer to (left, top, right, bottom)
+                    bbox = (item[2][0]-item[2][2]//2, item[2][1]-item[2][3]//2, item[2][0]+item[2][2]//2, item[2][1]+item[2][3]//2) 
                     dataset.append((img_path, bbox))
 
         num_fns = len(dataset)

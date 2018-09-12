@@ -372,8 +372,8 @@ def predict(model, yololoader, json_file, use_gpu):
                 feature = model(img)
                 feature = feature.data.cpu()
                 feature = feature.tolist()[0]
-                print(feature)
-                print(type(feature))
+#                 print(feature)
+#                 print(type(feature))
                 
                 f.writelines(json.dumps(dict(fn=fn, bbox=b, vect=feature)))
                 f.write('\n')
